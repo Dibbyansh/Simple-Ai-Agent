@@ -1,0 +1,11 @@
+langchain 
+langgraph
+wikipedia 
+langchain-community 
+langchain-openai
+langchain-anthropic
+langchain-openrouter
+python-dotenv
+pydantic
+duckduckgo-search
+ddgs
