@@ -1,11 +1,9 @@
-langchain 
+langchain
 langgraph
-wikipedia 
-langchain-community 
-langchain-openai
-langchain-anthropic
+langchain-community
 langchain-openrouter
 python-dotenv
 pydantic
 duckduckgo-search
-ddgs
+wikipedia
+pathvalidate

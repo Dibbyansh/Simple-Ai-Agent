@@ -1,14 +1,20 @@
+import os
 from dotenv import load_dotenv
 from pydantic import BaseModel
-from langchain_core.messages import HumanMessage
 from langchain_openrouter import ChatOpenRouter
-from langgraph.prebuilt import create_react_agent
+from langchain_core.messages import HumanMessage
+from langchain.agents import create_agent
 
 from tools import search_tool, wiki_tool, save_tool
 
+# 🔹 Load environment variables (.env file)
 load_dotenv()
 
+# 🔹 Model name stored in .env
+MODEL = os.getenv("MODEL")
 
+
+# 🔹 Define structured output format (final result schema)
 class ResearchResult(BaseModel):
     topic: str
     summary: str
@@ -16,42 +22,81 @@ class ResearchResult(BaseModel):
     tools_used: list[str]
 
 
-llm = ChatOpenRouter(model="stepfun/step-3.5-flash:free")
-tools = [search_tool, wiki_tool, save_tool]
-
-SYSTEM_PROMPT = """You are a research assistant that helps produce research summaries.
-
-Use your tools when they improve the answer:
-- Web search for recent or niche facts.
-- Wikipedia for broad, stable background.
-- After every answer, call save_tool with the full summary and filename='topicofthesearch'.txt”
-Be concise in tool queries. After tools return, synthesize a clear answer.
-
-A separate step will turn your work into structured fields (topic, summary, sources, tools_used).
-List only real URLs or titles in sources. In tools_used, use the exact tool names you invoked."""
+# 🔹 Helper: get last AI response from agent messages
+def _last_ai_text(messages) -> str | None:
+    for msg in reversed(messages):
+        if getattr(msg, "type", None) == "ai" and msg.content:
+            return msg.content
+    return None
 
 
 def main() -> None:
-    agent = create_react_agent(
-        llm,
-        tools,
-        prompt=SYSTEM_PROMPT,
-        response_format=ResearchResult,
-    )
+    # 🔹 Step 1: Initialize LLM
+    llm = ChatOpenRouter(model=MODEL)
 
-    query = input("What can i help you research? ")
-    result = agent.invoke({"messages": [HumanMessage(content=query)]})
+    # 🔹 Step 2: Register tools (agent can use these)
+    tools = [search_tool, wiki_tool]
 
-    structured = result.get("structured_response")
-    if structured is not None:
-        print(structured)
+    # 🔹 Step 3: Define agent behavior
+    system_prompt = """You are a research assistant.
+    Use web_search for recent information and wikipedia_search for general background.
+    Answer clearly and mention sources."""
+
+    # 🔹 Step 4: Create agent (ReAct style)
+    agent = create_agent(llm, tools, system_prompt=system_prompt)
+
+    # 🔹 Step 5: Take user input
+    query = input("Enter your research topic: ").strip()
+    if not query:
+        print("Please enter something.")
         return
 
-    for msg in reversed(result["messages"]):
-        if msg.type == "ai":
-            print(msg.content)
-            return
+    # 🔹 Step 6: Run agent → generates raw research output
+    result = agent.invoke({"messages": [HumanMessage(content=query)]})
+
+    # 🔹 Step 7: Extract last AI response
+    raw = _last_ai_text(result["messages"])
+    if not raw:
+        print("Failed to generate a response.")
+        return
+
+    # 🔹 Step 8: Convert raw output → structured format
+    # This ensures consistent output (topic, summary, etc.)
+    formatter = llm.with_structured_output(ResearchResult)
+
+    structured = formatter.invoke(
+        "Convert this research into the required structured format. "
+        "Summary under 120 words, concise.\n\n" + str(raw)
+    )
+
+    # 🔹 Step 9: Handle failure safely
+    if structured is None:
+        print("Structured output failed. Raw response:\n")
+        print(raw)
+        return
+
+    # 🔹 Step 10: Display clean output
+    print("\n=== RESULT ===\n")
+    print(f"Topic: {structured.topic}\n")
+    print(f"Summary:\n{structured.summary}\n")
+    print(f"Sources: {', '.join(structured.sources)}\n")
+    print(f"Tools used: {', '.join(structured.tools_used)}")
+
+    # 🔹 Step 11: Ask user if they want to save result
+    if input("\nSave to file? (y/n): ").strip().lower() == "y":
+        filename = structured.topic.replace(" ", "_") + ".txt"
+
+        # Call save tool manually
+        save_tool.invoke({
+            "data": structured.summary,
+            "filename": filename
+        })
+
+        print("Saved.")
+    else:
+        print("Not saved.")
 
 
+# 🔹 Entry point
 if __name__ == "__main__":
     main()
